@@ -1,0 +1,490 @@
+---
+title: "nAMD simulation model"
+output: html_notebook
+---
+
+# Overview
+
+- Code for simulating nAMD visual outcomes following treatment delay
+
+- Main headings:
+  - EMR data
+  - Simulation
+  - Summarise simulation results
+
+```{r}
+library(tidyverse)
+```
+
+# EMR data
+
+## Load EMR data for treated nAMD eyes
+
+- Note: 'EyeID' must be class 'character'
+- Note: VA readings must be in ETDRS letters
+- EMR data columns:
+  - EyeID: unique IDs
+  - baseline_va
+  - one_year_va
+
+### CODE TO GENERATE RANDOM DATASET
+
+```{r}
+nAMD_vas_only <- tibble(
+  EyeID = as.character(seq(1:20825)),
+  baseline_va = round(runif(n = 20825, min = 0, max = 100)),
+  one_year_va = round(runif(n = 20825, min = 0, max = 100))
+)
+```
+
+## Mutate derived variables
+
+- baseline_va_category
+- one_year_va_category
+- change_va_one_year
+- va_worse_6_60
+- va_worse_6_24
+- va_better_6_12
+
+```{r}
+nAMD_vas_only <- nAMD_vas_only %>%
+  mutate(
+    baseline_va_category = case_when(
+      baseline_va >= 65 ~ 1,
+      baseline_va >= 50 & baseline_va < 65 ~ 2,
+      baseline_va >= 35 & baseline_va < 50 ~ 3,
+      baseline_va < 35 ~ 4
+    ),
+    one_year_va_category = case_when(
+      one_year_va >= 65 ~ 1,
+      one_year_va >= 50 & one_year_va < 65 ~ 2,
+      one_year_va >= 35 & one_year_va < 50 ~ 3,
+      one_year_va < 35 ~ 4
+    ),
+    change_va_one_year = one_year_va - baseline_va,
+    va_worse_6_60 = case_when(one_year_va <= 35 ~ 1, TRUE ~ 0),
+    va_worse_6_24 = case_when(one_year_va <= 55 ~ 1, TRUE ~ 0),
+    va_better_6_12 = case_when(one_year_va >= 70 ~ 1, TRUE ~ 0)
+  )
+```
+
+# Simulation
+
+## Pool EMR data by baseline VA category
+
+```{r}
+# pool
+one <- nAMD_vas_only %>% filter(baseline_va_category == 1)
+
+two <- nAMD_vas_only %>% filter(baseline_va_category == 2)
+
+three <- nAMD_vas_only %>% filter(baseline_va_category == 3)
+
+four <- nAMD_vas_only %>% filter(baseline_va_category == 4)
+
+# combine into list
+
+va_outcomes_list <- list(one, two, three, four)
+
+names(va_outcomes_list) <- c('one', 'two', 'three', 'four')
+```
+
+## Simulation function
+
+```{r}
+wet_amd_one_year_outcome_simulator <-
+  function(medisoft_data,
+           medisoft_va_list,
+           n_eyes = 1000,
+           number_simulations = 1,
+           delay = FALSE,
+           uniform_normal = "uniform",
+           subtract_lower = 0,
+           subtract_upper = 0,
+           mean_letter_loss = 0,
+           mean_letter_loss_sd = 0) {
+    # medisoft_data = dataframe with baseline and one year nAMD visual outcomes
+    # medisoft_va_list = list with 4 VA categories, each element containing pool of real eye 1 year nAMD outcome data
+    # n_eyes = number of eyes sampled in each iteration
+    # number_simulations = number of iterations in simulation
+    # delay = TRUE maintains eyes with baseline VA <=6/96 with same VA score at one year (as they would not fit NICE criteria for tx)
+    # uniform_normal - if "uniform", use subtract_lower and subtract_upper arguments. These simulate a random letter loss for each eye sampled randomly from a uniform distribution with lower (subtract_lower) and upper (subtract_upper) limits as specified.
+    # uniform_normal - if "normal", use mean_letter_loss and mean_letter_loss_sd arguments. These simulate random letter loss for each eye, where the number of letters lost is sampled randomly from a normal distribution with the specified mean/SD. Note: any negative numbers are reset to zero.
+    
+    #######################################################
+    #######################################################
+    #1) Create list to store results from each iteration
+    
+    iteration_list = vector(mode = "list", length = number_simulations)
+    
+    #######################################################
+    #######################################################
+    #2) Define estimated baseline VA distribution - default is that of input data (medisoft_data). First, a random number of letters is subtracted from each eye, as per input arguments. Eyes are then recategorised into VA categories and the new proportions of eyes in each category calculated. These proportions are then used to determine the numbers of eyes sampled from each baseline VA pool in step 3.
+    # Note: standard deviations for proportions are calculated using the normal approximation to the binomial. The rationale for this is to incorporate some reflection of the size of the EMR dataset used.
+    
+    for (iteration in seq(1:number_simulations)) {
+      # if uniform_normal argument == "uniform", use subtract_lower and subtract_upper arguments,
+      # else if == "normal", use mean_letter_loss and mean_letter_loss_sd arguments
+      
+      ###UNIFORM###
+      if (uniform_normal == "uniform") {
+        set.seed(iteration)
+        # Vector of random integers between specified limits of letter loss
+        random_vector <-
+          round(runif(nrow(medisoft_data), subtract_lower, subtract_upper))
+        
+        ## subtract letters from each eye and recategorise baseline VA
+        medisoft_data_subtract_letters <- medisoft_data %>%
+          mutate(random = random_vector,
+                 baseline_va = baseline_va - random) %>%
+          mutate(
+            baseline_va_category = case_when(
+              baseline_va >= 65 ~ 1,
+              baseline_va >= 50 & baseline_va < 65 ~ 2,
+              baseline_va >= 35 & baseline_va < 50 ~ 3,
+              baseline_va < 35 ~ 4
+            )
+          )
+        
+        ## recalculate baseline VA distribution (proportion eyes in each category)
+        medisoft_data_subtract_letters <-
+          medisoft_data_subtract_letters %>%
+          group_by(baseline_va_category) %>%
+          summarise(
+            proportion = n() / nrow(medisoft_data),
+            standard_deviation = sqrt(proportion * (1 - proportion) / n())
+          )
+        
+        # Extract proportions of eyes in each VA category (and associated SD estimates)
+        baseline_va_prob = medisoft_data_subtract_letters$proportion
+        baseline_va_prob_sd = medisoft_data_subtract_letters$standard_deviation
+        # Define numbers of eyes in each baseline VA category
+        set.seed(iteration)
+        eye_categories <-
+          as.vector(table(sample(
+            x = seq(1:4),
+            size = n_eyes,
+            replace = TRUE,
+            prob = abs(
+              rnorm(n = 4, mean = baseline_va_prob, sd = baseline_va_prob_sd)
+            )
+          )))
+        
+        ###NORMAL###
+      } else if (uniform_normal == "normal") {
+        set.seed(iteration)
+        # create random vector of letter losses, sampled from a normal distribution as specified by mean_letter_loss and mean_letter_loss_sd arguments
+        random_vector <-
+          round(rnorm(
+            nrow(medisoft_data),
+            mean_letter_loss,
+            mean_letter_loss_sd
+          ))
+        
+        ## subtract letters and recategorise baseline VA
+        medisoft_data_subtract_letters <- medisoft_data %>%
+          mutate(random = random_vector) %>%
+          mutate(random = case_when(random < 0 ~ 0, TRUE ~ random)) %>% # reset any negative vision letter losses to zero (it is improbable that untreated nAMD eyes would gain vision)
+          mutate(baseline_va = baseline_va - random) %>%
+          mutate(
+            baseline_va_category = case_when(
+              baseline_va >= 65 ~ 1,
+              baseline_va >= 50 & baseline_va < 65 ~ 2,
+              baseline_va >= 35 & baseline_va < 50 ~ 3,
+              baseline_va < 35 ~ 4
+            )
+          )
+        
+        ## recalculate baseline VA distribution (proportion eyes in each category)
+        medisoft_data_subtract_letters <-
+          medisoft_data_subtract_letters %>%
+          group_by(baseline_va_category) %>%
+          summarise(
+            proportion = n() / nrow(medisoft_data),
+            standard_deviation = sqrt(proportion * (1 - proportion) / n())
+          )
+        
+        ## Extract proportions of eyes in each VA category (and associated SD estimates)
+        baseline_va_prob = medisoft_data_subtract_letters$proportion
+        baseline_va_prob_sd = medisoft_data_subtract_letters$standard_deviation
+        # Define numbers of eyes to be sampled from each baseline VA pool
+        set.seed(iteration)
+        eye_categories <-
+          as.vector(table(sample(
+            x = seq(1:4),
+            size = n_eyes,
+            replace = TRUE,
+            prob = abs(
+              rnorm(n = 4, mean = baseline_va_prob, sd = baseline_va_prob_sd)
+            )
+          )))
+      }
+      
+      #######################################################
+      #######################################################
+      
+      #3) For each baseline VA, sample the number of eyes allocated in the previous step from each corresponding pool of real data eyes
+      samples <- vector(mode = "list", length = 4L)
+      
+      for (i in seq_along(eye_categories)) {
+        set.seed(iteration)
+        samples[[i]] <-
+          sample(x = medisoft_va_list[[i]][["EyeID"]],
+                 size = eye_categories[i],
+                 replace = TRUE)
+      }
+      
+      # Combine list of all selected EyeID's
+      all_eyes <- character()
+      
+      for (i in seq_along(samples)) {
+        all_eyes <- c(all_eyes, samples[[i]])
+      }
+      
+      # ...and convert to tibble
+      all_eyes <- tibble(EyeID = all_eyes)
+      
+      # Extract these EyeID's and their full data from the original dataset
+      all_eyes_full <- all_eyes %>%
+        left_join(medisoft_data, by = "EyeID") %>%
+        mutate(iteration_number = iteration)
+      
+      ###!!!###
+      # delay == TRUE
+      # ...if selected eye has baseline VA <=25 letters (i.e. <=6/96 and therefore outside NICE tx criteria), then not treated - adjust one year outcome columns accordingly
+      
+      if (delay == TRUE) {
+        all_eyes_full <- all_eyes_full %>%
+          mutate(
+            one_year_va = case_when(baseline_va <= 25 ~ baseline_va,
+                                    TRUE ~ one_year_va),
+            
+            one_year_va_category = case_when(
+              one_year_va >= 65 ~ 1,
+              one_year_va >= 50 & one_year_va < 65 ~ 2,
+              one_year_va >= 35 & one_year_va < 50 ~ 3,
+              one_year_va < 35 ~ 4
+            )
+            
+          ) %>%
+          mutate(
+            change_va_one_year = one_year_va - baseline_va,
+            va_worse_6_60 = case_when(one_year_va <= 35 ~ 1, TRUE ~ 0),
+            va_better_6_12 = case_when(one_year_va >= 70 ~ 1, TRUE ~ 0),
+            va_worse_6_24 = case_when(one_year_va <= 55 ~ 1, TRUE ~ 0),
+          )
+      }
+      
+      ###!!!###
+      
+      # Add results to list of iterations
+      iteration_list[[iteration]] <- all_eyes_full
+      
+    }
+    
+    #######################################################
+    #######################################################
+    #4) Convert list of iterations into a nested dataframe, then map through this to extract summary visual outcomes
+    
+    #...at this point we have a list of iterations, where each item in the list contains a set of 1000 eyes sampled from the input dataset, according to the specified proportions of baseline VA categories
+    
+    # create empty tibble
+    all_iterations <- tibble()
+    
+    # rbind all iterations from list into single tibble
+    for (df in seq_along(iteration_list)) {
+      all_iterations <- rbind(all_iterations, iteration_list[[df]])
+    }
+    
+    # then nest by "simulation" (iteration number)
+    all_iterations <- all_iterations %>%
+      group_by(iteration_number) %>%
+      nest()
+    
+    # Mutate summary statistics
+    all_iterations <- all_iterations %>% mutate(
+      mean_one_year_va = map_dbl(data, ~ mean(.x$one_year_va)),
+      mean_baseline_va = map_dbl(data, ~ mean(.x$baseline_va)),
+      pct_va_worse_6_60 = map_dbl(data, ~ sum(.x$va_worse_6_60) / nrow(.x)),
+      pct_va_worse_6_24 = map_dbl(data, ~ sum(.x$va_worse_6_24) / nrow(.x)),
+      pct_va_better_6_12 = map_dbl(data, ~ sum(.x$va_better_6_12) / nrow(.x)),
+      
+      pct_baseline_va_category_1 = map_dbl(data,
+                                           ~ sum(.x$baseline_va_category == 1) / nrow(.x)),
+      pct_baseline_va_category_2 = map_dbl(data,
+                                           ~ sum(.x$baseline_va_category == 2) / nrow(.x)),
+      pct_baseline_va_category_3 = map_dbl(data,
+                                           ~ sum(.x$baseline_va_category == 3) / nrow(.x)),
+      pct_baseline_va_category_4 = map_dbl(data,
+                                           ~ sum(.x$baseline_va_category == 4) / nrow(.x)),
+      
+      pct_one_year_va_category_1 = map_dbl(data,
+                                           ~ sum(.x$one_year_va_category == 1) / nrow(.x)),
+      pct_one_year_va_category_2 = map_dbl(data,
+                                           ~ sum(.x$one_year_va_category == 2) / nrow(.x)),
+      pct_one_year_va_category_3 = map_dbl(data,
+                                           ~ sum(.x$one_year_va_category == 3) / nrow(.x)),
+      pct_one_year_va_category_4 = map_dbl(data,
+                                           ~ sum(.x$one_year_va_category == 4) / nrow(.x))
+      
+    )
+    
+    return(all_iterations)
+  }
+```
+
+## Simulation models
+
+### 1000 eyes - no delay, delay == TRUE
+
+```{r}
+no_delay_delay_true <-
+  wet_amd_one_year_outcome_simulator(
+    medisoft_data = nAMD_vas_only,
+    medisoft_va_list = va_outcomes_list,
+    subtract_lower = 0,
+    subtract_upper = 0,
+    n_eyes = 1000,
+    number_simulations = 100,
+    delay = TRUE
+  )
+```
+
+### 1000 eyes - 3 month delay
+
+```{r}
+month_3_lose_4_sd_9 <-
+  wet_amd_one_year_outcome_simulator(
+    medisoft_data = nAMD_vas_only,
+    medisoft_va_list = va_outcomes_list,
+    subtract_lower = 0,
+    subtract_upper = 0,
+    uniform_normal = "normal",
+    mean_letter_loss = 4,
+    mean_letter_loss_sd = 9,
+    n_eyes = 1000,
+    number_simulations = 100,
+    delay = TRUE
+  )
+```
+
+### 1000 eyes - 6 month delay
+
+```{r}
+month_6_lose_7_sd_12 <-
+  wet_amd_one_year_outcome_simulator(
+    medisoft_data = nAMD_vas_only,
+    medisoft_va_list = va_outcomes_list,
+    subtract_lower = 0,
+    subtract_upper = 0,
+    uniform_normal = "normal",
+    mean_letter_loss = 7,
+    mean_letter_loss_sd = 12,
+    n_eyes = 1000,
+    number_simulations = 100,
+    delay = TRUE
+  )
+```
+
+### 1000 eyes - 9 month delay
+
+```{r}
+month_9_lose_9_sd_15 <-
+  wet_amd_one_year_outcome_simulator(
+    medisoft_data = nAMD_vas_only,
+    medisoft_va_list = va_outcomes_list,
+    subtract_lower = 0,
+    subtract_upper = 0,
+    uniform_normal = "normal",
+    mean_letter_loss = 9,
+    mean_letter_loss_sd = 15,
+    n_eyes = 1000,
+    number_simulations = 100,
+    delay = TRUE
+  )
+```
+
+# Summarise simulation results
+
+```{r}
+# Combine selected models into a list 
+simulations_list <- list(
+  no_delay_delay_true,
+  month_3_lose_4_sd_9,
+  month_6_lose_7_sd_12,
+  month_9_lose_9_sd_15
+  )
+
+names(simulations_list) <- c(
+  'no_delay_delay_true',
+  'month_3_lose_4_sd_9',
+  'month_6_lose_7_sd_12',
+  'month_9_lose_9_sd_15'
+  )
+
+# Drop list column and mutate column to indicate simulation model
+for (df in seq_along(simulations_list)) {
+  simulations_list[[df]] <- simulations_list[[df]] %>%
+    select(iteration_number, mean_one_year_va:pct_one_year_va_category_4) %>%
+    unnest(cols = c()) %>% 
+    ungroup() %>% 
+    mutate(simulation = names(simulations_list[df]))
+}
+
+# rbind
+simulations_summary <- tibble()
+
+for (df in seq_along(simulations_list)) {
+  simulations_summary <- rbind(simulations_summary, simulations_list[[df]])
+}
+
+# nest by simulation model
+simulations_summary <- simulations_summary %>% 
+  group_by(simulation) %>% 
+  nest()
+
+# map summary columns
+simulations_summary_final <- simulations_summary %>% 
+  mutate(
+    mean_one_year_va = map_dbl(data, ~ mean(.x$mean_one_year_va)),
+    sd_one_year_va = map_dbl(data, ~sd(.x$mean_one_year_va)),
+    CI_lower_mean_one_year_va = map_dbl(data, ~ mean(.x$mean_one_year_va) - 2*sd(.x$mean_one_year_va)),
+    CI_upper_mean_one_year_va = map_dbl(data, ~ mean(.x$mean_one_year_va) + 2*sd(.x$mean_one_year_va)),
+    
+    mean_baseline_va = map_dbl(data, ~ mean(.x$mean_baseline_va)),
+    sd_baseline_va = map_dbl(data, ~sd(.x$mean_baseline_va)),
+    CI_lower_mean_baseline_va = map_dbl(data, ~ mean(.x$mean_baseline_va) - 2*sd(.x$mean_baseline_va)),
+    CI_upper_mean_baseline_va = map_dbl(data, ~ mean(.x$mean_baseline_va) + 2*sd(.x$mean_baseline_va)),
+    
+    pct_va_worse_6_60 = map_dbl(data, ~ mean(.x$pct_va_worse_6_60)),
+    sd_pct_va_worse_6_60 = map_dbl(data, ~ sd(.x$pct_va_worse_6_60)),
+    CI_lower_pct_va_worse_6_60 = map_dbl(data, ~ mean(.x$pct_va_worse_6_60) - 2*sd(.x$pct_va_worse_6_60)),
+    CI_upper_pct_va_worse_6_60 = map_dbl(data, ~ mean(.x$pct_va_worse_6_60) + 2*sd(.x$pct_va_worse_6_60)),
+    
+    pct_va_worse_6_24 = map_dbl(data, ~ mean(.x$pct_va_worse_6_24)),
+    sd_pct_va_worse_6_24 = map_dbl(data, ~ sd(.x$pct_va_worse_6_24)),
+    CI_lower_pct_va_worse_6_24 = map_dbl(data, ~ mean(.x$pct_va_worse_6_24) - 2*sd(.x$pct_va_worse_6_24)),
+    CI_upper_pct_va_worse_6_24 = map_dbl(data, ~ mean(.x$pct_va_worse_6_24) + 2*sd(.x$pct_va_worse_6_24)),
+    
+    pct_va_better_6_12 = map_dbl(data, ~ mean(.x$pct_va_better_6_12)),
+    sd_pct_va_better_6_12 = map_dbl(data, ~ sd(.x$pct_va_better_6_12)),
+    CI_lower_va_better_6_12 = map_dbl(data, ~ mean(.x$pct_va_better_6_12) - 2*sd(.x$pct_va_better_6_12)),
+    CI_upper_va_better_6_12 = map_dbl(data, ~ mean(.x$pct_va_better_6_12) + 2*sd(.x$pct_va_better_6_12)),
+    
+    pct_baseline_va_category_1 = map_dbl(data, ~mean(.x$pct_baseline_va_category_1)),
+    pct_baseline_va_category_2 = map_dbl(data, ~mean(.x$pct_baseline_va_category_2)),
+    pct_baseline_va_category_3 = map_dbl(data, ~mean(.x$pct_baseline_va_category_3)),
+    pct_baseline_va_category_4 = map_dbl(data, ~mean(.x$pct_baseline_va_category_4)),
+    
+    pct_one_year_va_category_1 = map_dbl(data, ~mean(.x$pct_one_year_va_category_1)),
+    pct_one_year_va_category_2 = map_dbl(data, ~mean(.x$pct_one_year_va_category_2)),
+    pct_one_year_va_category_3 = map_dbl(data, ~mean(.x$pct_one_year_va_category_3)),
+    pct_one_year_va_category_4 = map_dbl(data, ~mean(.x$pct_one_year_va_category_4)),
+    
+  ) %>% 
+  select(-data) %>% 
+  ungroup()
+
+# show result
+kable(simulations_summary_final)
+```
