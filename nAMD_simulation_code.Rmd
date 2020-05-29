@@ -14,6 +14,7 @@ output: html_notebook
 
 ```{r}
 library(tidyverse)
+library(knitr)
 ```
 
 # EMR data
@@ -448,28 +449,28 @@ simulations_summary_final <- simulations_summary %>%
   mutate(
     mean_one_year_va = map_dbl(data, ~ mean(.x$mean_one_year_va)),
     sd_one_year_va = map_dbl(data, ~sd(.x$mean_one_year_va)),
-    CI_lower_mean_one_year_va = map_dbl(data, ~ mean(.x$mean_one_year_va) - 2*sd(.x$mean_one_year_va)),
-    CI_upper_mean_one_year_va = map_dbl(data, ~ mean(.x$mean_one_year_va) + 2*sd(.x$mean_one_year_va)),
+    CI_lower_mean_one_year_va = map_dbl(data, ~quantile(.x$mean_one_year_va, probs = 0.025)),
+    CI_upper_mean_one_year_va = map_dbl(data, ~quantile(.x$mean_one_year_va, probs = 0.975)),
     
     mean_baseline_va = map_dbl(data, ~ mean(.x$mean_baseline_va)),
     sd_baseline_va = map_dbl(data, ~sd(.x$mean_baseline_va)),
-    CI_lower_mean_baseline_va = map_dbl(data, ~ mean(.x$mean_baseline_va) - 2*sd(.x$mean_baseline_va)),
-    CI_upper_mean_baseline_va = map_dbl(data, ~ mean(.x$mean_baseline_va) + 2*sd(.x$mean_baseline_va)),
+    CI_lower_mean_baseline_va = map_dbl(data, ~quantile(.x$mean_baseline_va, probs = 0.025)),
+    CI_upper_mean_baseline_va = map_dbl(data, ~quantile(.x$mean_baseline_va, probs = 0.975)),
     
     pct_va_worse_6_60 = map_dbl(data, ~ mean(.x$pct_va_worse_6_60)),
     sd_pct_va_worse_6_60 = map_dbl(data, ~ sd(.x$pct_va_worse_6_60)),
-    CI_lower_pct_va_worse_6_60 = map_dbl(data, ~ mean(.x$pct_va_worse_6_60) - 2*sd(.x$pct_va_worse_6_60)),
-    CI_upper_pct_va_worse_6_60 = map_dbl(data, ~ mean(.x$pct_va_worse_6_60) + 2*sd(.x$pct_va_worse_6_60)),
+    CI_lower_pct_va_worse_6_60 = map_dbl(data, ~quantile(.x$pct_va_worse_6_60, probs = 0.025)),
+    CI_upper_pct_va_worse_6_60 = map_dbl(data, ~quantile(.x$pct_va_worse_6_60, probs = 0.975)),
     
     pct_va_worse_6_24 = map_dbl(data, ~ mean(.x$pct_va_worse_6_24)),
     sd_pct_va_worse_6_24 = map_dbl(data, ~ sd(.x$pct_va_worse_6_24)),
-    CI_lower_pct_va_worse_6_24 = map_dbl(data, ~ mean(.x$pct_va_worse_6_24) - 2*sd(.x$pct_va_worse_6_24)),
-    CI_upper_pct_va_worse_6_24 = map_dbl(data, ~ mean(.x$pct_va_worse_6_24) + 2*sd(.x$pct_va_worse_6_24)),
+    CI_lower_pct_va_worse_6_24 = map_dbl(data, ~quantile(.x$pct_va_worse_6_24, probs = 0.025)),
+    CI_upper_pct_va_worse_6_24 = map_dbl(data, ~quantile(.x$pct_va_worse_6_24, probs = 0.975)),
     
     pct_va_better_6_12 = map_dbl(data, ~ mean(.x$pct_va_better_6_12)),
     sd_pct_va_better_6_12 = map_dbl(data, ~ sd(.x$pct_va_better_6_12)),
-    CI_lower_va_better_6_12 = map_dbl(data, ~ mean(.x$pct_va_better_6_12) - 2*sd(.x$pct_va_better_6_12)),
-    CI_upper_va_better_6_12 = map_dbl(data, ~ mean(.x$pct_va_better_6_12) + 2*sd(.x$pct_va_better_6_12)),
+    CI_lower_va_better_6_12 = map_dbl(data, ~quantile(.x$pct_va_better_6_12, probs = 0.025)),
+    CI_upper_va_better_6_12 = map_dbl(data, ~quantile(.x$pct_va_better_6_12, probs = 0.975)),
     
     pct_baseline_va_category_1 = map_dbl(data, ~mean(.x$pct_baseline_va_category_1)),
     pct_baseline_va_category_2 = map_dbl(data, ~mean(.x$pct_baseline_va_category_2)),
