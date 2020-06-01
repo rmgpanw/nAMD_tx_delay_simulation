@@ -223,7 +223,6 @@ wet_amd_one_year_outcome_simulator <-
       
       #######################################################
       #######################################################
-      
       #3) For each baseline VA, sample the number of eyes allocated in the previous step from each corresponding pool of real data eyes
       samples <- vector(mode = "list", length = 4L)
       
