@@ -42,7 +42,6 @@ nAMD_vas_only <- tibble(
 
 - baseline_va_category
 - one_year_va_category
-- change_va_one_year
 - va_worse_6_60
 - va_worse_6_24
 - va_better_6_12
@@ -62,7 +61,6 @@ nAMD_vas_only <- nAMD_vas_only %>%
       one_year_va >= 35 & one_year_va < 50 ~ 3,
       one_year_va < 35 ~ 4
     ),
-    change_va_one_year = one_year_va - baseline_va,
     va_worse_6_60 = case_when(one_year_va <= 35 ~ 1, TRUE ~ 0),
     va_worse_6_24 = case_when(one_year_va <= 55 ~ 1, TRUE ~ 0),
     va_better_6_12 = case_when(one_year_va >= 70 ~ 1, TRUE ~ 0)
@@ -268,7 +266,6 @@ wet_amd_one_year_outcome_simulator <-
             
           ) %>%
           mutate(
-            change_va_one_year = one_year_va - baseline_va,
             va_worse_6_60 = case_when(one_year_va <= 35 ~ 1, TRUE ~ 0),
             va_better_6_12 = case_when(one_year_va >= 70 ~ 1, TRUE ~ 0),
             va_worse_6_24 = case_when(one_year_va <= 55 ~ 1, TRUE ~ 0),
@@ -333,7 +330,7 @@ wet_amd_one_year_outcome_simulator <-
   }
 ```
 
-## Simulation models
+## Simulation models (set to 100 iterations)
 
 ### 1000 eyes - no delay, delay == TRUE
 
